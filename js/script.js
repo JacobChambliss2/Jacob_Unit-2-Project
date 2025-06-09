@@ -31,43 +31,6 @@ function unlockScroll() {
     document.body.style.overflow = '';
   }
 }
-function animateCar2(selectedSpeed) {
-  const car2 = document.getElementById("car2");
-  const scale = document.getElementById("speed-scale");
-  if (!car2 || !scale) return;
-
-  // Constants for the hill and physics
-  const hillHeight = 300; // px
-  const hillWidth = 600; // px
-  const minSpeed = 10; // mph
-  const maxSpeed = 100; // mph
-  const baseDuration = 6000; // ms for minSpeed
-
-  // Air resistance increases exponentially with speed (drag ~ v^2)
-  // We'll use a simple model: duration = baseDuration * (minSpeed/selectedSpeed) * (1 + 0.01 * selectedSpeed^2)
-  const dragFactor = 1 + 0.01 * Math.pow(selectedSpeed, 2);
-  const duration = baseDuration * (minSpeed / selectedSpeed) * dragFactor;
-
-  // Exponential path for the hill: y = hillHeight * (1 - exp(-3x/hillWidth))
-  // We'll animate x from 0 to hillWidth
-  let start = null;
-  function step(timestamp) {
-    if (!start) start = timestamp;
-    const elapsed = timestamp - start;
-    const progress = Math.min(elapsed / duration, 1);
-    const x = hillWidth * progress;
-    const y = hillHeight * (1 - Math.exp(-3 * x / hillWidth));
-    car2.style.left = x + "px";
-    car2.style.bottom = y + "px";
-    if (progress < 1) {
-      requestAnimationFrame(step);
-    }
-  }
-  // Reset car2 position
-  car2.style.left = "0px";
-  car2.style.bottom = "0px";
-  requestAnimationFrame(step);
-}
 
 function animateCarAndPerson() {
   startTime = null;
@@ -310,19 +273,7 @@ function startRoadGame() {
   // Start game loop
   gameAnimationFrame = requestAnimationFrame(gameLoop);
 }
-document.addEventListener('DOMContentLoaded', function() {
-      const slider = document.getElementById('speed-slider');
-      const label = document.getElementById('selected-speed-label');
-      const btn = document.getElementById('start-hill-btn');
-      let selectedSpeed = parseInt(slider.value, 10);
-      slider.addEventListener('input', function() {
-        selectedSpeed = parseInt(slider.value, 10);
-        label.textContent = `Speed: ${selectedSpeed} mph`;
-      });
-      btn.addEventListener('click', function() {
-        animateCar2(selectedSpeed);
-      });
-    });
+
 // Start the road game when section2 is scrolled into view
 const section2 = document.querySelector('.section2');
 if (section2) {
@@ -331,23 +282,228 @@ if (section2) {
   startRoadGame();
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-  const slider = document.getElementById('speed-slider');
-  const label = document.getElementById('selected-speed-label');
-  const btn = document.getElementById('start-hill-btn');
-  let selectedSpeed = parseInt(slider.value, 10);
-  slider.addEventListener('input', function() {
-    selectedSpeed = parseInt(slider.value, 10);
-    label.textContent = `Speed: ${selectedSpeed} mph`;
-  });
-  btn.addEventListener('click', function() {
-    animateCar2(selectedSpeed);
-  });
-});
-
 // Prevent arrow keys and spacebar from scrolling the page
 window.addEventListener('keydown', function(e) {
   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Spacebar"].includes(e.key)) {
     e.preventDefault();
   }
 }, { passive: false });
+
+document.addEventListener('DOMContentLoaded', function() {
+  const section2 = document.querySelector('.section2');
+  if (!section2) return;
+  section2.innerHTML = '<div id="road-game-container" style="width: 100vw; height: 80vh; margin: 0; position: relative;"></div>';
+
+  // Sideways game: lanes are horizontal rows, player moves left to right
+  const roadWidth = Math.floor(window.innerWidth * 0.95);
+  const roadHeight = Math.floor(window.innerHeight * 0.8);
+  const laneCount = 6;
+  const laneHeight = roadHeight / laneCount;
+  const carWidth = 80;
+  const carHeight = Math.max(40, Math.floor(laneHeight * 0.8));
+  let playerLane = Math.floor(laneCount / 2);
+  let playerX = 10;
+  let playerSpeed = 4; // Start at low speed
+  const minPlayerSpeed = 4;
+  const maxPlayerSpeed = 18;
+  let speedStep = 2; // How much to increase speed each round
+  let roundTime = 4000; // ms per round before speed increases
+  let enemyCars = [];
+  let gameActive = true;
+  let gameAnimationFrame;
+  let speedMeter;
+  let roundTimer;
+  let currentRound = 0;
+
+  function setupSpeedMeter() {
+    if (!speedMeter) {
+      speedMeter = document.createElement('div');
+      speedMeter.id = 'speed-meter';
+      speedMeter.style.position = 'absolute';
+      speedMeter.style.top = '10px';
+      speedMeter.style.left = '50%';
+      speedMeter.style.transform = 'translateX(-50%)';
+      speedMeter.style.background = 'rgba(0,0,0,0.7)';
+      speedMeter.style.color = '#fff';
+      speedMeter.style.fontSize = '28px';
+      speedMeter.style.fontFamily = 'Arial, sans-serif';
+      speedMeter.style.padding = '8px 24px';
+      speedMeter.style.borderRadius = '12px';
+      speedMeter.style.zIndex = '10';
+      speedMeter.style.textAlign = 'center';
+      section2.appendChild(speedMeter);
+    }
+    speedMeter.textContent = `Speed: ${playerSpeed.toFixed(1)}`;
+  }
+
+  function startGameAtSpeed(speed) {
+    playerSpeed = speed;
+    playerLane = Math.floor(laneCount / 2);
+    playerX = 10;
+    enemyCars = [];
+    // Spawn initial enemy cars, spaced out, going left-to-right
+    for (let i = 0; i < laneCount; i++) {
+      // Place 2-3 cars per lane, spaced out
+      let numCars = 2 + Math.floor(Math.random() * 2); // 2 or 3
+      for (let j = 0; j < numCars; j++) {
+        let x = 100 + Math.random() * (roadWidth * 0.7) + j * 120;
+        // For player's lane, ensure at least one car is present, but not right on top of player
+        if (i === playerLane && j === 0) {
+          x = 200 + Math.random() * (roadWidth * 0.5); // always at least 200px away from left
+        }
+        // For player's lane, skip cars that would be too close to the player
+        if (i === playerLane && x < 120) continue;
+        // Enemy speed is random and constant, not based on playerSpeed, centered around 3.5 px/frame
+        const enemySpeed = 2.5 + Math.random() * 2; // 2.5 to 4.5 px/frame
+        enemyCars.push({ lane: i, x: x, speed: enemySpeed });
+      }
+    }
+    // Guarantee at least one car in player's lane if not already
+    if (!enemyCars.some(car => car.lane === playerLane)) {
+      let x = 200 + Math.random() * (roadWidth * 0.5);
+      const enemySpeed = 2.5 + Math.random() * 2;
+      enemyCars.push({ lane: playerLane, x: x, speed: enemySpeed });
+    }
+    gameActive = true;
+    setupSpeedMeter();
+    drawGameInit();
+    if (gameAnimationFrame) cancelAnimationFrame(gameAnimationFrame);
+    gameAnimationFrame = requestAnimationFrame(gameLoop);
+  }
+
+  // Create canvas
+  const gameContainer = document.getElementById('road-game-container');
+  let canvas = document.createElement('canvas');
+  canvas.width = roadWidth;
+  canvas.height = roadHeight;
+  canvas.style.display = 'block';
+  canvas.style.margin = '0 auto';
+  canvas.style.background = '#444';
+  gameContainer.appendChild(canvas);
+  let ctx = canvas.getContext('2d');
+
+  function drawRoad() {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, 0, roadWidth, roadHeight);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 4;
+    for (let i = 1; i < laneCount; i++) {
+      ctx.setLineDash([20, 20]);
+      ctx.beginPath();
+      ctx.moveTo(0, i * laneHeight);
+      ctx.lineTo(roadWidth, i * laneHeight);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  function drawPlayer() {
+    ctx.save();
+    ctx.fillStyle = '#e00';
+    ctx.fillRect(playerX, playerLane * laneHeight + (laneHeight - carHeight) / 2, carWidth, carHeight);
+    ctx.restore();
+  }
+
+  function drawEnemies() {
+    ctx.save();
+    ctx.fillStyle = '#0af';
+    enemyCars.forEach(car => {
+      ctx.fillRect(car.x, car.lane * laneHeight + (laneHeight - carHeight) / 2, carWidth, carHeight);
+    });
+    ctx.restore();
+  }
+
+  function updateEnemies() {
+    for (let car of enemyCars) {
+      car.x += car.speed; // Move right (same as player)
+    }
+    enemyCars = enemyCars.filter(car => car.x < roadWidth);
+  }
+
+  function checkCollision() {
+    const playerY = playerLane * laneHeight + (laneHeight - carHeight) / 2;
+    for (let car of enemyCars) {
+      const enemyY = car.lane * laneHeight + (laneHeight - carHeight) / 2;
+      if (
+        playerLane === car.lane &&
+        playerX + carWidth > car.x &&
+        playerX < car.x + carWidth &&
+        playerY < enemyY + carHeight &&
+        playerY + carHeight > enemyY
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function drawGameInit() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawRoad();
+    drawPlayer();
+    drawEnemies();
+  }
+
+  let lastEnemyTime = 0;
+  function gameLoop(timestamp) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawRoad();
+    drawPlayer();
+    drawEnemies();
+    updateEnemies();
+    playerX += playerSpeed; // Move player right
+    if (playerX > roadWidth - carWidth) {
+      playerX = roadWidth - carWidth;
+      if (gameActive) {
+        currentRound++;
+        let nextSpeed = Math.min(playerSpeed + speedStep, maxPlayerSpeed);
+        startGameAtSpeed(nextSpeed);
+        return;
+      }
+    }
+    if (checkCollision()) {
+      gameActive = false;
+      ctx.font = '40px Arial';
+      ctx.fillStyle = 'yellow';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over!', roadWidth / 2, roadHeight / 2);
+      return;
+    }
+    // Spawn more cars, left-to-right
+    if (!lastEnemyTime || timestamp - lastEnemyTime > 700 + Math.random() * 400) {
+      const occupiedLanes = new Set();
+      for (let car of enemyCars) {
+        if (car.x < carWidth * 1.5) {
+          occupiedLanes.add(car.lane);
+        }
+      }
+      const freeLanes = [];
+      for (let i = 0; i < laneCount; i++) {
+        if (!occupiedLanes.has(i)) freeLanes.push(i);
+      }
+      if (freeLanes.length > 0) {
+        const lane = freeLanes[Math.floor(Math.random() * freeLanes.length)];
+        const enemySpeed = 2.5 + Math.random() * 2;
+        enemyCars.push({ lane, x: 0, speed: enemySpeed });
+      }
+      lastEnemyTime = timestamp;
+    }
+    speedMeter.textContent = `Speed: ${playerSpeed.toFixed(1)}`;
+    if (gameActive) {
+      gameAnimationFrame = requestAnimationFrame(gameLoop);
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (!gameActive) return;
+    if ((e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') && playerLane > 0) {
+      playerLane -= 1;
+    } else if ((e.key === 'ArrowDown' || e.key.toLowerCase() === 's') && playerLane < laneCount - 1) {
+      playerLane += 1;
+    }
+  }
+  document.addEventListener('keydown', handleKeyDown);
+
+  // Start the first round
+  startGameAtSpeed(minPlayerSpeed);
+});
